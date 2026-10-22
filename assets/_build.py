@@ -178,7 +178,7 @@ def m_recourse(c, v):
     d = (B - A) / np.linalg.norm(B - A)
     nrm = np.array([d[1], -d[0]])                      # points to the positive side
     L = np.linalg.norm(B - A)
-    movers = [(A + t * d + o * nrm, o) for t, o in [(0.22 * L, -34), (0.62 * L, -40), (0.42 * L, -22), (0.82 * L, -26)]]
+    movers = [(A + t * d + off * nrm, off) for t, off in [(0.22 * L, -34), (0.42 * L, -22), (0.62 * L, -40), (0.82 * L, -26)]]
     P = np.column_stack([rng.uniform(ox + 8, ox + w - 8, 34), rng.uniform(oy + 8, oy + h - 8, 34)])
     s = [f'<defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="{v}"/></marker></defs>',
          f'<rect x="{ox}" y="{oy}" width="{w}" height="{h}" fill="none" stroke="{c["border"]}"/>',
@@ -195,21 +195,20 @@ def m_recourse(c, v):
             s.append(f'<circle cx="{p[0]:.1f}" cy="{p[1]:.1f}" r="3" fill="{c["canvas"]}" stroke="{c["fg"]}" stroke-width="1.2"/>')
     for i, (p, dist) in enumerate(movers):
         q = p + (-dist + 8) * nrm
-        off = f'begin="-{i * T / len(movers):.2f}s" dur="{T}s" repeatCount="indefinite"'
-        pos_kt = "0;0.08;0.24;0.80;0.86;1"                       # wait, move, hold, (hidden) return, wait
-        op_kt = "0;0.08;0.12;0.70;0.80;1"                        # fade in as it moves, fade out before returning
-        pv = lambda a0, a1: f"{a0:.1f};{a0:.1f};{a1:.1f};{a1:.1f};{a0:.1f};{a0:.1f}"
+        a = (0.6 + 1.1 * i) / T              # start of this unit's move
+        b = a + 0.7 / T                      # end of move
+        kt = f"0;{a:.3f};{b:.3f};0.90;0.97;1"
         s.append(f'<circle cx="{p[0]:.1f}" cy="{p[1]:.1f}" r="3" fill="{c["canvas"]}" stroke="{c["fg"]}" stroke-width="1.2"/>')
         s.append(
             f'<line x1="{p[0]:.1f}" y1="{p[1]:.1f}" x2="{p[0]:.1f}" y2="{p[1]:.1f}" stroke="{v}" stroke-width="1.5" marker-end="url(#ah)" opacity="0">'
-            f'<animate attributeName="x2" values="{pv(p[0], q[0])}" keyTimes="{pos_kt}" {off}/>'
-            f'<animate attributeName="y2" values="{pv(p[1], q[1])}" keyTimes="{pos_kt}" {off}/>'
-            f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{op_kt}" {off}/></line>')
+            f'<animate attributeName="x2" values="{p[0]:.1f};{p[0]:.1f};{q[0]:.1f};{q[0]:.1f};{q[0]:.1f};{p[0]:.1f}" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
+            f'<animate attributeName="y2" values="{p[1]:.1f};{p[1]:.1f};{q[1]:.1f};{q[1]:.1f};{q[1]:.1f};{p[1]:.1f}" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
+            f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/></line>')
         s.append(
             f'<circle cx="{p[0]:.1f}" cy="{p[1]:.1f}" r="3.4" fill="{v}" opacity="0">'
-            f'<animate attributeName="cx" values="{pv(p[0], q[0])}" keyTimes="{pos_kt}" {off}/>'
-            f'<animate attributeName="cy" values="{pv(p[1], q[1])}" keyTimes="{pos_kt}" {off}/>'
-            f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{op_kt}" {off}/></circle>')
+            f'<animate attributeName="cx" values="{p[0]:.1f};{p[0]:.1f};{q[0]:.1f};{q[0]:.1f};{q[0]:.1f};{p[0]:.1f}" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
+            f'<animate attributeName="cy" values="{p[1]:.1f};{p[1]:.1f};{q[1]:.1f};{q[1]:.1f};{q[1]:.1f};{p[1]:.1f}" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
+            f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/></circle>')
     s.append(f'<text x="{ox + w}" y="{oy + h + 16}" text-anchor="end" font-family="{SANS}" font-size="11" fill="{c["muted"]}">recourse  x → x′  turns a negative outcome positive</text>')
     return "\n  ".join(s)
 
@@ -278,7 +277,7 @@ def m_clexnet(c, v):
 
 def m_dynamite(c, v):
     """Sequential offers along time while cold ischaemic time accumulates."""
-    T, xs = 7, [632, 680, 728, 776, 824]
+    T, xs = 6, [632, 680, 728, 776, 824]
     s = [f'<text x="620" y="40" font-family="{SANS}" font-size="11" fill="{c["muted"]}">sequential offers</text>',
          f'<line x1="620" x2="866" y1="78" y2="78" stroke="{c["border"]}" stroke-width="2"/>']
     for i, x in enumerate(xs):
