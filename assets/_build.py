@@ -16,10 +16,10 @@ ML4H = {"dark": "#f778ba", "light": "#bf3989"}
 GH = {
     "dark": dict(canvas="#0d1117", subtle="#161b22", border="#30363d", fg="#e6edf3", muted="#8b949e",
                  faint="#484f58", accent="#4493f8", accent_bg="#121d2f", btn="#21262d", btn_border="#363b42",
-                 g_fill="#0b3d1c", g_line="#3fb950", g_block="#2ea043"),
+                 snake="#56d364", snake_glow="#3fb950", snake_head="#aff5b4"),
     "light": dict(canvas="#ffffff", subtle="#f6f8fa", border="#d0d7de", fg="#1f2328", muted="#59636e",
                   faint="#afb8c1", accent="#0969da", accent_bg="#ddf4ff", btn="#f6f8fa", btn_border="#d1d9e0",
-                  g_fill="#aceebb", g_line="#1a7f37", g_block="#2da44e"),
+                  snake="#1a7f37", snake_glow="#2da44e", snake_head="#116329"),
 }
 SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif"
 MONO = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace"
@@ -30,13 +30,15 @@ def esc(s):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Header: a 3D Gaussian-mixture density, projected by hand, morphing in a loop.
-# Each ridge is one path whose `d` is animated through precomputed frames.
+# Header: a 3D Gaussian-mixture density drawn as a wireframe mesh over a floor grid,
+# morphing in a loop, with a green snake hill-climbing the mesh toward the peak.
 # ══════════════════════════════════════════════════════════════════════════════
-N_FRAMES, LOOP_S = 28, 16
-U = np.linspace(-3.2, 3.2, 34)          # along each ridge
-V = np.linspace(3.2, -3.2, 24)          # ridges, far → near (painter's order)
+N_FRAMES, LOOP_S = 24, 16               # surface keyframes per loop, loop length (s)
+NG = 24                                 # mesh nodes per side
+G = np.linspace(-3.2, 3.2, NG)
 ROT, SX, SY, HZ, CX, CY = 0.42, 56, 23, 125, 885, 190
+STEPS = 48                              # snake moves per surface loop
+SNAKE_LEN = 8
 
 
 def density(u, v, th):
@@ -55,75 +57,88 @@ def project(u, v, z):
     return x, y
 
 
-def surface_frames():
-    thetas = np.linspace(0, 2 * np.pi, N_FRAMES, endpoint=False)
-    zmax = max(density(*np.meshgrid(U, V), th).max() for th in thetas)
-    frames = []                                  # frames[k][ridge] -> d string
-    for th in thetas:
-        ridges = []
-        for v in V:
-            z = density(U, v, th) / zmax
-            x, y = project(U, v, z)
-            bx, by = project(U[[-1, 0]], v, 0)   # floor line closes the shape
-            pts = " ".join(f"{a * 10:.0f} {b * 10:.0f}" for a, b in zip(x, y))
-            ridges.append(f"M{pts} L{bx[0] * 10:.0f} {by[0] * 10:.0f} L{bx[1] * 10:.0f} {by[1] * 10:.0f}Z")
-        frames.append(ridges)
-    return frames
+GU, GV = np.meshgrid(G, G)              # [iv, iu]
+THETAS = np.linspace(0, 2 * np.pi, N_FRAMES, endpoint=False)
+ZMAX = max(density(GU, GV, th).max() for th in THETAS)
+Z = np.array([density(GU, GV, th) / ZMAX for th in THETAS])          # [frame, iv, iu]
 
 
-FRAMES = surface_frames()
+def z_at(phase):
+    """Height field at a fractional loop phase, interpolated exactly as the browser interpolates keyframes."""
+    f = (phase % 1.0) * N_FRAMES
+    k0 = int(np.floor(f)) % N_FRAMES
+    a = f - np.floor(f)
+    return (1 - a) * Z[k0] + a * Z[(k0 + 1) % N_FRAMES]
 
 
-GLITCH_S = 11.0                                   # own cycle, out of step with the 16 s surface loop
-BURSTS = [(3.0, 0.40), (7.9, 0.22), (9.65, 0.16)]  # (start, duration) in seconds
+def mesh_d(z):
+    x, y = project(GU, GV, z)
+    x, y = np.round(x * 10).astype(int), np.round(y * 10).astype(int)
+    rows = "".join("M" + " ".join(f"{x[i, j]} {y[i, j]}" for j in range(NG)) for i in range(NG))
+    cols = "".join("M" + " ".join(f"{x[i, j]} {y[i, j]}" for i in range(NG)) for j in range(NG))
+    return rows + cols
+
+
+def simulate_snake():
+    """Greedy hill-climb on the moving density. Deterministic on a finite state space, so it settles into a
+    cycle; we start the animation at the beginning of that cycle so the loop is seamless."""
+    body = [(NG - 2, 1 + i) for i in range(SNAKE_LEN)][::-1]      # head first
+    seen, history, s = {}, [], 0
+    while True:
+        if s % STEPS == 0:
+            key = tuple(body)
+            if key in seen:
+                start = seen[key]
+                return history[start:s + 1], (s - start) // STEPS
+            seen[key] = s
+        history.append(list(body))
+        z = z_at((s + 1) / STEPS)
+        hv, hu = body[0]
+        occupied = set(body[:-1])
+        moves = [(hv + dv, hu + du) for dv, du in ((-1, 0), (1, 0), (0, -1), (0, 1))]
+        moves = [m for m in moves if 0 <= m[0] < NG and 0 <= m[1] < NG and m not in occupied]
+        if not moves:
+            moves = [body[-1]]
+        nxt = max(moves, key=lambda m: (z[m], -m[0], -m[1]))
+        body = [nxt] + body[:-1]
+        s += 1
+
+
+SNAKE, SNAKE_PERIODS = simulate_snake()
+
+
+def snake_layer(c):
+    pts = []
+    for k, body in enumerate(SNAKE):
+        z = z_at(k / STEPS)
+        xy = [project(G[iu], G[iv], z[iv, iu] + 0.012) for iv, iu in body]
+        pts.append(xy)
+    pts.append(pts[0])                                   # close the loop
+    d_vals = ";".join("M" + " L".join(f"{x:.1f} {y:.1f}" for x, y in xy) for xy in pts)
+    hx = ";".join(f"{xy[0][0]:.1f}" for xy in pts)
+    hy = ";".join(f"{xy[0][1]:.1f}" for xy in pts)
+    dur = SNAKE_PERIODS * LOOP_S
+    anim = f'dur="{dur}s" repeatCount="indefinite"'
+    d0 = d_vals.split(";")[0]
+    glow, body_col, head = c["snake_glow"], c["snake"], c["snake_head"]
+    return (f'<defs><filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3.5"/></filter></defs>'
+            f'<path d="{d0}" fill="none" stroke="{glow}" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" opacity="0.75" filter="url(#glow)">'
+            f'<animate attributeName="d" {anim} values="{d_vals}"/></path>'
+            f'<path d="{d0}" fill="none" stroke="{body_col}" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">'
+            f'<animate attributeName="d" {anim} values="{d_vals}"/></path>'
+            f'<circle r="4.2" fill="{head}" cx="{hx.split(";")[0]}" cy="{hy.split(";")[0]}">'
+            f'<animate attributeName="cx" {anim} values="{hx}"/><animate attributeName="cy" {anim} values="{hy}"/></circle>')
 
 
 def surface(c):
-    """The morphing surface, plus a glitch: bands tear sideways and reveal a green copy underneath."""
-    n = len(V)
-    ridges = []
-    for r in range(n):
-        vals = ";".join(FRAMES[k][r] for k in range(N_FRAMES)) + ";" + FRAMES[0][r]
-        op = 0.35 + 0.65 * r / (n - 1)
-        ridges.append(f'<path d="{FRAMES[0][r]}" stroke-opacity="{op:.2f}" stroke-width="14" stroke-linejoin="round">'
-                      f'<animate attributeName="d" dur="{LOOP_S}s" repeatCount="indefinite" values="{vals}"/></path>')
-    corners = [project(np.array(a), np.array(b), 0) for a, b in [(-3.2, 3.2), (3.2, 3.2), (3.2, -3.2), (-3.2, -3.2)]]
-    floor = " L".join(f"{float(x):.1f} {float(y):.1f}" for x, y in corners)
-
-    rng = np.random.default_rng(23)
-    edges = np.concatenate([[0], np.sort(rng.uniform(40, 300, 11)), [320]])
-    defs = [f'<g id="surf" transform="scale(0.1)">{"".join(ridges)}</g>']
-    layers = [f'<path d="M{floor}Z" fill="none" stroke="{c["border"]}"/>',
-              f'<use href="#surf" fill="{c["g_fill"]}" stroke="{c["g_line"]}" opacity="0">'
-              f'<animate attributeName="opacity" calcMode="discrete" dur="{GLITCH_S}s" repeatCount="indefinite" '
-              f'keyTimes="0;{";".join(f"{t0 / GLITCH_S:.4f};{(t0 + d) / GLITCH_S:.4f}" for t0, d in BURSTS)}" '
-              f'values="0;{";".join("1;0" for _ in BURSTS)}"/></use>']
-    for i in range(len(edges) - 1):
-        y0, y1 = edges[i], edges[i + 1] + 1.0                      # 1px overlap hides seams
-        defs.append(f'<clipPath id="b{i}"><rect x="590" y="{y0:.1f}" width="610" height="{y1 - y0:.1f}"/></clipPath>')
-        keys = [(0.0, 0.0)]
-        for t0, d in BURSTS:
-            if rng.uniform() < 0.55:
-                for k in range(3):
-                    keys.append(((t0 + k * d / 3) / GLITCH_S, float(rng.choice([-1, 1]) * rng.uniform(5, 34))))
-                keys.append(((t0 + d) / GLITCH_S, 0.0))
-        keys.append((1.0, 0.0))
-        anim = ""
-        if len(keys) > 2:
-            anim = (f'<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="{GLITCH_S}s" repeatCount="indefinite" '
-                    f'keyTimes="{";".join(f"{t:.4f}" for t, _ in keys)}" values="{";".join(f"{dx:.0f} 0" for _, dx in keys)}"/>')
-        layers.append(f'<g clip-path="url(#b{i})"><use href="#surf" fill="{c["canvas"]}" stroke="{c["accent"]}">{anim}</use></g>')
-    # green blocks flickering during the bursts
-    for t0, d in BURSTS:
-        for _ in range(7):
-            x, y = rng.uniform(650, 1130), rng.uniform(70, 280)
-            w, h = rng.uniform(6, 70), rng.uniform(3, 14)
-            on = t0 + rng.uniform(0, d * 0.6)
-            off = min(on + rng.uniform(0.05, d * 0.6), t0 + d)
-            layers.append(f'<rect x="{x:.0f}" y="{y:.0f}" width="{w:.0f}" height="{h:.0f}" fill="{c["g_block"]}" opacity="0">'
-                          f'<animate attributeName="opacity" calcMode="discrete" dur="{GLITCH_S}s" repeatCount="indefinite" '
-                          f'keyTimes="0;{on / GLITCH_S:.4f};{off / GLITCH_S:.4f}" values="0;0.9;0"/></rect>')
-    return "<defs>" + "".join(defs) + "</defs>" + "".join(layers)
+    frames = [mesh_d(Z[k]) for k in range(N_FRAMES)]
+    vals = ";".join(frames + frames[:1])
+    floor = mesh_d(np.zeros_like(GU))
+    return (f'<g transform="scale(0.1)">'
+            f'<path d="{floor}" fill="none" stroke="{c["border"]}" stroke-width="8" opacity="0.7"/>'
+            f'<path d="{frames[0]}" fill="none" stroke="{c["accent"]}" stroke-opacity="0.75" stroke-width="10" stroke-linejoin="round">'
+            f'<animate attributeName="d" dur="{LOOP_S}s" repeatCount="indefinite" values="{vals}"/></path></g>'
+            + snake_layer(c))
 
 
 def header(theme):

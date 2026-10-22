@@ -7,7 +7,7 @@
 </a>
 
 <p align="center">
-  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=500&size=18&duration=2800&pause=900&color=4493F8&center=true&vCenter=true&width=640&lines=Estimating+what+would+have+happened...;...from+what+humans+said+would+help.;Causal+inference+%C3%97+explainable+AI;Treatment+effects+for+real-world+decisions" alt="Typing animation"/>
+  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=500&size=18&duration=2800&pause=900&color=4493F8&center=true&vCenter=true&width=640&lines=Estimating+what+would+have+happened...;...using+the+reasons+humans+give+for+their+decisions.;Causal+inference+%C3%97+explainable+AI;Treatment+effects+for+real-world+decisions" alt="Typing animation"/>
 </p>
 
 <p align="center">
