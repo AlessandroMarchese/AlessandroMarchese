@@ -16,10 +16,10 @@ ML4H = {"dark": "#f778ba", "light": "#bf3989"}
 GH = {
     "dark": dict(canvas="#0d1117", subtle="#161b22", border="#30363d", fg="#e6edf3", muted="#8b949e",
                  faint="#484f58", accent="#4493f8", accent_bg="#121d2f", btn="#21262d", btn_border="#363b42",
-                 snake_cells=["#56d364", "#2ea043", "#196c2e", "#0f5323"]),
+                 glow="#3fb950"),
     "light": dict(canvas="#ffffff", subtle="#f6f8fa", border="#d0d7de", fg="#1f2328", muted="#59636e",
                   faint="#afb8c1", accent="#0969da", accent_bg="#ddf4ff", btn="#f6f8fa", btn_border="#d1d9e0",
-                  snake_cells=["#116329", "#1a7f37", "#2da44e", "#6fdd8b"]),
+                  glow="#2da44e"),
 }
 SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif"
 MONO = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace"
@@ -31,14 +31,12 @@ def esc(s):
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Header: a 3D Gaussian-mixture density drawn as a wireframe mesh over a floor grid,
-# morphing in a loop, with a green snake hill-climbing the mesh toward the peak.
+# morphing in a loop, with random mesh squares pulsing green (rarely NeurIPS purple).
 # ══════════════════════════════════════════════════════════════════════════════
 N_FRAMES, LOOP_S = 24, 16               # surface keyframes per loop, loop length (s)
 NG = 24                                 # mesh nodes per side
 G = np.linspace(-3.2, 3.2, NG)
 ROT, SX, SY, HZ, CX, CY = 0.42, 56, 23, 125, 885, 190
-STEPS = 48                              # snake moves per surface loop
-SNAKE_LEN = 4
 
 
 def density(u, v, th):
@@ -79,75 +77,43 @@ def mesh_d(z):
     return rows + cols
 
 
-def component(u, v, th, k):
-    """Density of mixture component k alone (each snake climbs its own top)."""
-    m = [np.array([1.35 * np.cos(th), 1.0 * np.sin(th)]), np.array([-1.1 * np.cos(th + 0.6), -1.25 * np.sin(th + 0.6)])][k]
-    sd = [0.70 + 0.08 * np.cos(2 * th), 0.86 - 0.08 * np.cos(2 * th)][k]
-    return np.exp(-((u - m[0]) ** 2 + (v - m[1]) ** 2) / (2 * sd * sd))
+N_GLOW = 42                             # how many mesh squares get a pulse
+PURPLE_SHARE = 0.12                     # rare NeurIPS-purple ones
 
 
-CU, CV = np.meshgrid((G[:-1] + G[1:]) / 2, (G[:-1] + G[1:]) / 2)     # cell centres [iv, iu]
-NC = NG - 1
+def glow_cells(c, theme):
+    """Random mesh squares that pulse green (rarely purple), riding the morphing surface.
+    Every pulse period divides the 16 s surface loop, so the whole header repeats cleanly."""
+    rng = np.random.default_rng(42)
+    cells = set()
+    while len(cells) < N_GLOW:
+        cells.add((int(rng.integers(1, NG - 2)), int(rng.integers(1, NG - 2))))
+    out, defs = [], []
+    for n, (iv, iu) in enumerate(sorted(cells)):
+        corners = [(iv, iu), (iv, iu + 1), (iv + 1, iu + 1), (iv + 1, iu)]
+        ds = []
+        for k in list(range(N_FRAMES)) + [0]:
+            xy = np.array([project(G[cu], G[cv], Z[k][cv, cu] + 0.004) for cv, cu in corners])
+            ctr = xy.mean(0)
+            xy = ctr + (xy - ctr) * 0.9
+            ds.append("M" + " L".join(f"{x:.1f} {y:.1f}" for x, y in xy) + "Z")
+        col = NEURIPS[theme] if rng.uniform() < PURPLE_SHARE else c["glow"]
+        period = float(rng.choice([4.0, 8.0, 16.0]))
+        width = rng.uniform(0.22, 0.4) * (4.0 / period)        # pulse length ≈ 0.9–1.6 s
+        start = rng.uniform(0, 1 - width)
+        peak = rng.uniform(0.7, 1.0)
+        kt = f"0;{start:.3f};{start + width / 2:.3f};{start + width:.3f};1"
+        pulse = (f'<animate attributeName="opacity" dur="{period:.0f}s" repeatCount="indefinite" keyTimes="{kt}" '
+                 f'values="0;0;{peak:.2f};0;0" calcMode="spline" keySplines="0 0 1 1;.4 0 .6 1;.4 0 .6 1;0 0 1 1"/>')
+        shape = f'<animate attributeName="d" dur="{LOOP_S}s" repeatCount="indefinite" values="{";".join(ds)}"/>'
+        defs.append(f'<path id="q{n}" d="{ds[0]}">{shape}</path>')
+        out.append(f'<g opacity="0" fill="{col}">{pulse}'
+                   f'<use href="#q{n}" filter="url(#glow)" opacity="0.9"/><use href="#q{n}"/></g>')
+    return (f'<defs><filter id="glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="5"/></filter>'
+            + "".join(defs) + "</defs>" + "".join(out))
 
 
-def simulate_snakes():
-    """Two short snakes made of mesh cells, each greedily climbing toward its component's top.
-    Deterministic on a finite state space, so it falls into a cycle; the animation starts at that cycle."""
-    def cell(x, y):
-        return (int(np.clip(round((y + 3.2) / 6.4 * NC - 0.5), 0, NC - 1)), int(np.clip(round((x + 3.2) / 6.4 * NC - 0.5), 0, NC - 1)))
-    starts = [cell(2.6, -1.6), cell(-2.6, 1.6)]
-    snakes = [[(v0, min(u0 + i, NC - 1)) for i in range(SNAKE_LEN)] for v0, u0 in starts]
-    seen, history, s = {}, [], 0
-    while True:
-        if s % STEPS == 0:
-            key = tuple(tuple(b) for b in snakes)
-            if key in seen:
-                start = seen[key]
-                return history[start:s], (s - start) // STEPS
-            seen[key] = s
-        history.append([list(b) for b in snakes])
-        th = 2 * np.pi * ((s + 1) / STEPS)
-        new = []
-        for k, body in enumerate(snakes):
-            score = component(CU, CV, th, k)
-            hv, hu = body[0]
-            blocked = set(body[:-1]) | {c for j, o in enumerate(snakes) if j != k for c in o} | {c for o in new for c in o}
-            moves = [(hv + dv, hu + du) for dv, du in ((-1, 0), (1, 0), (0, -1), (0, 1))]
-            moves = [m for m in moves if 0 <= m[0] < NC and 0 <= m[1] < NC and m not in blocked] or [body[-1]]
-            nxt = max(moves, key=lambda m: (score[m], -m[0], -m[1]))
-            new.append([nxt] + body[:-1])
-        snakes = new
-        s += 1
-
-
-SNAKES, SNAKE_PERIODS = simulate_snakes()
-
-
-def snake_layer(c):
-    """Each body part is one mesh square, lifted onto the surface and inset so the blocks read separately."""
-    frames = SNAKES + SNAKES[:1]
-    dur = SNAKE_PERIODS * LOOP_S
-    anim = f'dur="{dur}s" repeatCount="indefinite"'
-    cols = c["snake_cells"]
-    out = []
-    for k in range(2):
-        for seg in range(SNAKE_LEN):
-            ds = []
-            for step, state in enumerate(frames):
-                z = z_at(step / STEPS)
-                iv, iu = state[k][seg]
-                corners = [(iv, iu), (iv, iu + 1), (iv + 1, iu + 1), (iv + 1, iu)]
-                xy = np.array([project(G[cu], G[cv], z[cv, cu] + 0.01) for cv, cu in corners])
-                ctr = xy.mean(0)
-                xy = ctr + (xy - ctr) * 0.84
-                ds.append("M" + " L".join(f"{x:.1f} {y:.1f}" for x, y in xy) + "Z")
-            out.append(f'<path d="{ds[0]}" fill="{cols[seg]}"><animate attributeName="d" {anim} values="{";".join(ds)}"/></path>')
-    body = "".join(out)
-    return (f'<defs><filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="4"/></filter></defs>'
-            f'<g filter="url(#glow)" opacity="0.8">{body}</g><g>{body}</g>')
-
-
-def surface(c):
+def surface(c, theme):
     frames = [mesh_d(Z[k]) for k in range(N_FRAMES)]
     vals = ";".join(frames + frames[:1])
     floor = mesh_d(np.zeros_like(GU))
@@ -155,7 +121,7 @@ def surface(c):
             f'<path d="{floor}" fill="none" stroke="{c["border"]}" stroke-width="8" opacity="0.7"/>'
             f'<path d="{frames[0]}" fill="none" stroke="{c["accent"]}" stroke-opacity="0.75" stroke-width="10" stroke-linejoin="round">'
             f'<animate attributeName="d" dur="{LOOP_S}s" repeatCount="indefinite" values="{vals}"/></path></g>'
-            + snake_layer(c))
+            + glow_cells(c, theme))
 
 
 def header(theme):
@@ -178,7 +144,7 @@ def header(theme):
   <text x="48" y="256" font-family="{SANS}" font-size="15" fill="{c["muted"]}">VUB × UHasselt</text>
   <text x="48" y="280" font-family="{SANS}" font-size="15" fill="{c["muted"]}">previously KU Leuven · King’s College London</text>
   <line x1="590" x2="590" y1="40" y2="280" stroke="{c["border"]}"/>
-  <g clip-path="url(#hc)">{surface(c)}</g>
+  <g clip-path="url(#hc)">{surface(c, theme)}</g>
 </svg>
 """
 
@@ -268,26 +234,36 @@ def m_clexnet(c, v):
     for hy in hidden:
         s.append(f'<line x1="{hx + 7}" y1="{hy}" x2="{ox_}" y2="{oy_}" stroke="{c["border"]}"/>')
     # one highlighted circuit per refusal reason
+    def crossfade(a, b, f=0.05):
+        """Opacity keyframes for a phase visible on [a, b] of a looping timeline, fading over f at each edge."""
+        def o(t):
+            d_in, d_out = (t - (a - f / 2)) % 1.0, ((b + f / 2) - t) % 1.0
+            span = (b - a) + f
+            if d_in > span:
+                return 0.0
+            return float(min(1.0, d_in / f, d_out / f))
+        ts = sorted({0.0, 1.0} | {round(x % 1.0, 4) for x in (a - f / 2, a + f / 2, b - f / 2, b + f / 2)})
+        return ";".join(f"{t:.4f}" for t in ts), ";".join(f"{o(t):.2f}" for t in ts)
+
     for k, (name, ins, hs) in enumerate(reasons):
-        a, b, f = k / 3, (k + 1) / 3, 0.035
-        kt = f"0;{a:.3f};{a + f:.3f};{b - f:.3f};{b:.3f};1"
-        anim = f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
-        if k == 0:
-            anim = f'<animate attributeName="opacity" values="1;1;0;0" keyTimes="0;{b - f:.3f};{b:.3f};1" dur="{T}s" repeatCount="indefinite"/>'
-        g = [f'<g opacity="{1 if k == 0 else 0}">{anim}']
+        kt, vals = crossfade(k / 3, (k + 1) / 3)
+        anim = f'<animate attributeName="opacity" values="{vals}" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
+        g = [f'<g opacity="0">{anim}']
         for i in ins:
             iy = inputs[i][1]
             for j in hs:
                 pid = f"c{k}{i}{j}"
                 g.append(f'<path id="{pid}" d="M{ix},{iy} L{hx - 7},{hidden[j]}" stroke="{v}" stroke-width="2" fill="none"/>')
-                g.append(f'<circle r="2.6" fill="{v}"><animateMotion dur="1.1s" begin="{0.15 * j:.2f}s" repeatCount="indefinite"><mpath href="#{pid}"/></animateMotion></circle>')
+                g.append(f'<circle r="2.6" fill="{v}"><animateMotion dur="1.125s" begin="{0.15 * j:.2f}s" repeatCount="indefinite"><mpath href="#{pid}"/></animateMotion></circle>')
             g.append(f'<rect x="604" y="{iy - 10}" width="72" height="20" rx="5" fill="{c["subtle"]}" stroke="{v}" stroke-width="1.6"/>'
                      f'<text x="640" y="{iy + 4}" text-anchor="middle" font-family="{SANS}" font-size="11" fill="{c["fg"]}">{inputs[i][0]}</text>')
         for j in hs:
             g.append(f'<path d="M{hx + 7},{hidden[j]} L{ox_},{oy_}" stroke="{v}" stroke-width="2" fill="none"/>')
             g.append(f'<circle cx="{hx}" cy="{hidden[j]}" r="7" fill="{v}"/>')
-        g.append(f'<text x="880" y="26" text-anchor="end" font-family="{SANS}" font-size="12" font-weight="600" fill="{v}">{name}</text>')
         g.append("</g>")
+        tkt, tvals = crossfade(k / 3 + 0.03, (k + 1) / 3 - 0.03, 0.03)      # labels never overlap
+        g.append(f'<text x="880" y="26" text-anchor="end" font-family="{SANS}" font-size="12" font-weight="600" fill="{v}" opacity="0">{name}'
+                 f'<animate attributeName="opacity" values="{tvals}" keyTimes="{tkt}" dur="{T}s" repeatCount="indefinite"/></text>')
         s.insert(len(s), "".join(g))
     # static nodes drawn under the highlight layers would be hidden, so put the base nodes first
     base = []
