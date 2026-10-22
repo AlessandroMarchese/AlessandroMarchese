@@ -16,10 +16,10 @@ ML4H = {"dark": "#f778ba", "light": "#bf3989"}
 GH = {
     "dark": dict(canvas="#0d1117", subtle="#161b22", border="#30363d", fg="#e6edf3", muted="#8b949e",
                  faint="#484f58", accent="#4493f8", accent_bg="#121d2f", btn="#21262d", btn_border="#363b42",
-                 glow="#3fb950"),
+                 greens=["#0e4429", "#006d32", "#26a641", "#39d353"]),
     "light": dict(canvas="#ffffff", subtle="#f6f8fa", border="#d0d7de", fg="#1f2328", muted="#59636e",
                   faint="#afb8c1", accent="#0969da", accent_bg="#ddf4ff", btn="#f6f8fa", btn_border="#d1d9e0",
-                  glow="#2da44e"),
+                  greens=["#9be9a8", "#40c463", "#30a14e", "#216e39"]),
 }
 SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif"
 MONO = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace"
@@ -31,10 +31,10 @@ def esc(s):
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Header: a 3D Gaussian-mixture density drawn as a wireframe mesh over a floor grid,
-# morphing in a loop, with random mesh squares pulsing green (rarely NeurIPS purple).
+# morphing in a loop, floating above floor squares that glow in contribution-graph greens.
 # ══════════════════════════════════════════════════════════════════════════════
-N_FRAMES, LOOP_S = 24, 16               # surface keyframes per loop, loop length (s)
-NG = 24                                 # mesh nodes per side
+N_FRAMES, LOOP_S = 40, 20               # surface keyframes per loop, loop length (s)
+NG = 20                                 # mesh nodes per side
 G = np.linspace(-3.2, 3.2, NG)
 ROT, SX, SY, HZ, CX, CY = 0.42, 56, 23, 125, 885, 190
 
@@ -77,51 +77,45 @@ def mesh_d(z):
     return rows + cols
 
 
-N_GLOW = 42                             # how many mesh squares get a pulse
-PURPLE_SHARE = 0.12                     # rare NeurIPS-purple ones
+N_GLOW = 30                             # floor squares that slowly breathe in and out
 
 
-def glow_cells(c, theme):
-    """Random mesh squares that pulse green (rarely purple), riding the morphing surface.
-    Every pulse period divides the 16 s surface loop, so the whole header repeats cleanly."""
+def glow_cells(c):
+    """Squares on the flat floor grid that glow in GitHub contribution greens, slowly and out of step.
+    Periods divide the 20 s surface loop, so the header still repeats cleanly."""
     rng = np.random.default_rng(42)
     cells = set()
     while len(cells) < N_GLOW:
-        cells.add((int(rng.integers(1, NG - 2)), int(rng.integers(1, NG - 2))))
-    out, defs = [], []
-    for n, (iv, iu) in enumerate(sorted(cells)):
+        cells.add((int(rng.integers(0, NG - 1)), int(rng.integers(0, NG - 1))))
+    out = []
+    for iv, iu in sorted(cells):
         corners = [(iv, iu), (iv, iu + 1), (iv + 1, iu + 1), (iv + 1, iu)]
-        ds = []
-        for k in list(range(N_FRAMES)) + [0]:
-            xy = np.array([project(G[cu], G[cv], Z[k][cv, cu] + 0.004) for cv, cu in corners])
-            ctr = xy.mean(0)
-            xy = ctr + (xy - ctr) * 0.9
-            ds.append("M" + " L".join(f"{x:.1f} {y:.1f}" for x, y in xy) + "Z")
-        col = NEURIPS[theme] if rng.uniform() < PURPLE_SHARE else c["glow"]
-        period = float(rng.choice([4.0, 8.0, 16.0]))
-        width = rng.uniform(0.22, 0.4) * (4.0 / period)        # pulse length ≈ 0.9–1.6 s
+        xy = np.array([project(G[cu], G[cv], 0.0) for cv, cu in corners])
+        ctr = xy.mean(0)
+        xy = ctr + (xy - ctr) * 0.86
+        d = "M" + " L".join(f"{x:.1f} {y:.1f}" for x, y in xy) + "Z"
+        col = c["greens"][int(rng.choice(4, p=[0.2, 0.3, 0.3, 0.2]))]
+        period = float(rng.choice([10.0, 20.0]))
+        width = rng.uniform(0.55, 0.8) if period == 10 else rng.uniform(0.3, 0.45)   # 5.5–9 s per breath
         start = rng.uniform(0, 1 - width)
-        peak = rng.uniform(0.7, 1.0)
         kt = f"0;{start:.3f};{start + width / 2:.3f};{start + width:.3f};1"
-        pulse = (f'<animate attributeName="opacity" dur="{period:.0f}s" repeatCount="indefinite" keyTimes="{kt}" '
-                 f'values="0;0;{peak:.2f};0;0" calcMode="spline" keySplines="0 0 1 1;.4 0 .6 1;.4 0 .6 1;0 0 1 1"/>')
-        shape = f'<animate attributeName="d" dur="{LOOP_S}s" repeatCount="indefinite" values="{";".join(ds)}"/>'
-        defs.append(f'<path id="q{n}" d="{ds[0]}">{shape}</path>')
-        out.append(f'<g opacity="0" fill="{col}">{pulse}'
-                   f'<use href="#q{n}" filter="url(#glow)" opacity="0.9"/><use href="#q{n}"/></g>')
-    return (f'<defs><filter id="glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="5"/></filter>'
-            + "".join(defs) + "</defs>" + "".join(out))
+        out.append(f'<g opacity="0" fill="{col}">'
+                   f'<animate attributeName="opacity" dur="{period:.0f}s" repeatCount="indefinite" keyTimes="{kt}" '
+                   f'values="0;0;1;0;0" calcMode="spline" keySplines="0 0 1 1;.45 0 .55 1;.45 0 .55 1;0 0 1 1"/>'
+                   f'<path d="{d}" filter="url(#glow)" opacity="0.8"/><path d="{d}"/></g>')
+    return (f'<defs><filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="4"/></filter></defs>'
+            + "".join(out))
 
 
 def surface(c, theme):
     frames = [mesh_d(Z[k]) for k in range(N_FRAMES)]
     vals = ";".join(frames + frames[:1])
     floor = mesh_d(np.zeros_like(GU))
-    return (f'<g transform="scale(0.1)">'
-            f'<path d="{floor}" fill="none" stroke="{c["border"]}" stroke-width="8" opacity="0.7"/>'
+    return (            f'<g transform="scale(0.1)"><path d="{floor}" fill="none" stroke="{c["border"]}" stroke-width="8" opacity="0.7"/></g>'
+            + glow_cells(c) +
+            f'<g transform="scale(0.1)">'
             f'<path d="{frames[0]}" fill="none" stroke="{c["accent"]}" stroke-opacity="0.75" stroke-width="10" stroke-linejoin="round">'
-            f'<animate attributeName="d" dur="{LOOP_S}s" repeatCount="indefinite" values="{vals}"/></path></g>'
-            + glow_cells(c, theme))
+            f'<animate attributeName="d" dur="{LOOP_S}s" repeatCount="indefinite" values="{vals}"/></path></g>')
 
 
 def header(theme):
@@ -184,7 +178,7 @@ def m_recourse(c, v):
     d = (B - A) / np.linalg.norm(B - A)
     nrm = np.array([d[1], -d[0]])                      # points to the positive side
     L = np.linalg.norm(B - A)
-    movers = [(A + t * d + off * nrm, off) for t, off in [(0.22 * L, -34), (0.42 * L, -22), (0.62 * L, -40), (0.82 * L, -26)]]
+    movers = [(A + t * d + o * nrm, o) for t, o in [(0.22 * L, -34), (0.62 * L, -40), (0.42 * L, -22), (0.82 * L, -26)]]
     P = np.column_stack([rng.uniform(ox + 8, ox + w - 8, 34), rng.uniform(oy + 8, oy + h - 8, 34)])
     s = [f'<defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="{v}"/></marker></defs>',
          f'<rect x="{ox}" y="{oy}" width="{w}" height="{h}" fill="none" stroke="{c["border"]}"/>',
@@ -201,20 +195,21 @@ def m_recourse(c, v):
             s.append(f'<circle cx="{p[0]:.1f}" cy="{p[1]:.1f}" r="3" fill="{c["canvas"]}" stroke="{c["fg"]}" stroke-width="1.2"/>')
     for i, (p, dist) in enumerate(movers):
         q = p + (-dist + 8) * nrm
-        a = (0.6 + 1.1 * i) / T              # start of this unit's move
-        b = a + 0.7 / T                      # end of move
-        kt = f"0;{a:.3f};{b:.3f};0.90;0.97;1"
+        off = f'begin="-{i * T / len(movers):.2f}s" dur="{T}s" repeatCount="indefinite"'
+        pos_kt = "0;0.08;0.24;0.80;0.86;1"                       # wait, move, hold, (hidden) return, wait
+        op_kt = "0;0.08;0.12;0.70;0.80;1"                        # fade in as it moves, fade out before returning
+        pv = lambda a0, a1: f"{a0:.1f};{a0:.1f};{a1:.1f};{a1:.1f};{a0:.1f};{a0:.1f}"
         s.append(f'<circle cx="{p[0]:.1f}" cy="{p[1]:.1f}" r="3" fill="{c["canvas"]}" stroke="{c["fg"]}" stroke-width="1.2"/>')
         s.append(
             f'<line x1="{p[0]:.1f}" y1="{p[1]:.1f}" x2="{p[0]:.1f}" y2="{p[1]:.1f}" stroke="{v}" stroke-width="1.5" marker-end="url(#ah)" opacity="0">'
-            f'<animate attributeName="x2" values="{p[0]:.1f};{p[0]:.1f};{q[0]:.1f};{q[0]:.1f};{q[0]:.1f};{p[0]:.1f}" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
-            f'<animate attributeName="y2" values="{p[1]:.1f};{p[1]:.1f};{q[1]:.1f};{q[1]:.1f};{q[1]:.1f};{p[1]:.1f}" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
-            f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/></line>')
+            f'<animate attributeName="x2" values="{pv(p[0], q[0])}" keyTimes="{pos_kt}" {off}/>'
+            f'<animate attributeName="y2" values="{pv(p[1], q[1])}" keyTimes="{pos_kt}" {off}/>'
+            f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{op_kt}" {off}/></line>')
         s.append(
             f'<circle cx="{p[0]:.1f}" cy="{p[1]:.1f}" r="3.4" fill="{v}" opacity="0">'
-            f'<animate attributeName="cx" values="{p[0]:.1f};{p[0]:.1f};{q[0]:.1f};{q[0]:.1f};{q[0]:.1f};{p[0]:.1f}" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
-            f'<animate attributeName="cy" values="{p[1]:.1f};{p[1]:.1f};{q[1]:.1f};{q[1]:.1f};{q[1]:.1f};{p[1]:.1f}" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
-            f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/></circle>')
+            f'<animate attributeName="cx" values="{pv(p[0], q[0])}" keyTimes="{pos_kt}" {off}/>'
+            f'<animate attributeName="cy" values="{pv(p[1], q[1])}" keyTimes="{pos_kt}" {off}/>'
+            f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{op_kt}" {off}/></circle>')
     s.append(f'<text x="{ox + w}" y="{oy + h + 16}" text-anchor="end" font-family="{SANS}" font-size="11" fill="{c["muted"]}">recourse  x → x′  turns a negative outcome positive</text>')
     return "\n  ".join(s)
 
@@ -283,7 +278,7 @@ def m_clexnet(c, v):
 
 def m_dynamite(c, v):
     """Sequential offers along time while cold ischaemic time accumulates."""
-    T, xs = 6, [632, 680, 728, 776, 824]
+    T, xs = 7, [632, 680, 728, 776, 824]
     s = [f'<text x="620" y="40" font-family="{SANS}" font-size="11" fill="{c["muted"]}">sequential offers</text>',
          f'<line x1="620" x2="866" y1="78" y2="78" stroke="{c["border"]}" stroke-width="2"/>']
     for i, x in enumerate(xs):
@@ -295,13 +290,15 @@ def m_dynamite(c, v):
         col = v if ok else c["muted"]
         mark = "✓" if ok else "×"
         s.append(f'<circle cx="{x}" cy="78" r="11" fill="{c["canvas"]}" stroke="{c["border"]}"/>')
-        s.append(f'<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;{t0 / T:.3f};{(t0 + .2) / T:.3f};.94;1" dur="{T}s" repeatCount="indefinite"/>'
+        s.append(f'<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;{t0 / T:.3f};{(t0 + .2) / T:.3f};.84;.96;1" dur="{T}s" repeatCount="indefinite"/>'
                  f'<circle cx="{x}" cy="78" r="11" fill="{c["subtle"]}" stroke="{col}" stroke-width="1.6"/>'
                  f'<text x="{x}" y="83" text-anchor="middle" font-family="{SANS}" font-size="13" font-weight="600" fill="{col}">{mark}</text></g>')
         s.append(f'<text x="{x}" y="106" text-anchor="middle" font-family="{MONO}" font-size="10" fill="{c["muted"]}">{i + 1}</text>')
     end = (0.5 + 3 * 0.9 + 0.2) / T
     s.append(f'<rect x="620" y="122" width="246" height="8" rx="4" fill="{c["subtle"]}" stroke="{c["border"]}"/>')
-    s.append(f'<rect x="620" y="122" width="0" height="8" rx="4" fill="{v}"><animate attributeName="width" values="0;150;150;0" keyTimes="0;{end:.3f};.94;1" dur="{T}s" repeatCount="indefinite"/></rect>')
+    s.append(f'<rect x="620" y="122" width="0" height="8" rx="4" fill="{v}">'
+             f'<animate attributeName="width" values="0;150;150;0;0" keyTimes="0;{end:.3f};.97;.98;1" dur="{T}s" repeatCount="indefinite"/>'
+             f'<animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;.84;.96;.98;1" dur="{T}s" repeatCount="indefinite"/></rect>')
     s.append(f'<text x="866" y="148" text-anchor="end" font-family="{SANS}" font-size="11" fill="{c["muted"]}">cold ischaemic time</text>')
     return "\n  ".join(s)
 
