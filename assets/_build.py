@@ -15,9 +15,9 @@ ML4H = {"dark": "#f778ba", "light": "#bf3989"}
 # ── GitHub Primer palette ─────────────────────────────────────────────────────
 GH = {
     "dark": dict(canvas="#0d1117", subtle="#161b22", border="#30363d", fg="#e6edf3", muted="#8b949e",
-                 faint="#484f58", accent="#4493f8", accent_bg="#121d2f", danger="#f85149", grid="#21262d"),
+                 faint="#484f58", accent="#4493f8", accent_bg="#121d2f", btn="#21262d", btn_border="#363b42"),
     "light": dict(canvas="#ffffff", subtle="#f6f8fa", border="#d0d7de", fg="#1f2328", muted="#59636e",
-                  faint="#afb8c1", accent="#0969da", accent_bg="#ddf4ff", danger="#cf222e", grid="#eaeef2"),
+                  faint="#afb8c1", accent="#0969da", accent_bg="#ddf4ff", btn="#f6f8fa", btn_border="#d1d9e0"),
 }
 SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif"
 MONO = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace"
@@ -28,101 +28,88 @@ def esc(s):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Header figure: a real (toy) simulation, not decoration.
-# Outcomes are only observed under selection that depends on the outcome itself,
-# so a naive kernel regression is biased; inverse-probability weights fix it.
+# Header: a 3D Gaussian-mixture density, projected by hand, morphing in a loop.
+# Each ridge is one path whose `d` is animated through precomputed frames.
 # ══════════════════════════════════════════════════════════════════════════════
-def simulate():
-    rng = np.random.default_rng(7)
-    n = 3000
-    t = rng.uniform(0, 10, n)
-    mu = lambda s: 0.6 + 3.0 * np.exp(-(((s - 5.2) / 2.5) ** 2))
-    y = mu(t) + 0.75 * rng.standard_normal(n)
-    logit = 0.3 + 5.0 * (y - mu(t)) * (t / 10)             # high-dose units are seen mostly when their outcome is high
-    p = 1 / (1 + np.exp(-logit))
-    seen = rng.uniform(size=n) < p
-    grid = np.linspace(0.3, 9.7, 60)
-
-    def nw(w):
-        k = np.exp(-0.5 * ((grid[:, None] - t[seen][None, :]) / 0.7) ** 2) * w[None, :]
-        return (k * y[seen][None, :]).sum(1) / k.sum(1)
-
-    naive = nw(np.ones(seen.sum()))
-    corrected = nw(1 / p[seen])
-    pts = rng.choice(np.flatnonzero(seen), 110, replace=False)  # a readable subset of the observed points
-    return dict(grid=grid, truth=mu(grid), naive=naive, corrected=corrected, pt=t[pts], py=y[pts])
+N_FRAMES, LOOP_S = 28, 16
+U = np.linspace(-3.2, 3.2, 34)          # along each ridge
+V = np.linspace(3.2, -3.2, 24)          # ridges, far → near (painter's order)
+ROT, SX, SY, HZ, CX, CY = 0.42, 56, 23, 125, 885, 196
 
 
-SIM = simulate()
+def density(u, v, th):
+    m1 = np.array([1.35 * np.cos(th), 1.0 * np.sin(th)])
+    m2 = np.array([-1.1 * np.cos(th + 0.6), -1.25 * np.sin(th + 0.6)])
+    s1, s2 = 0.70 + 0.08 * np.cos(2 * th), 0.86 - 0.08 * np.cos(2 * th)
+    w1 = 0.5 + 0.18 * np.sin(th)
+    g = lambda m, s: np.exp(-((u - m[0]) ** 2 + (v - m[1]) ** 2) / (2 * s * s)) / (2 * np.pi * s * s)
+    return w1 * g(m1, s1) + (1 - w1) * g(m2, s2)
 
 
-def figure(c, x0, y0, w, h):
-    """matplotlib-ish axes, drawn by hand."""
-    xmin, xmax, ymin, ymax = 0, 10, -0.5, 4.5
-    X = lambda v: x0 + (v - xmin) / (xmax - xmin) * w
-    Y = lambda v: y0 + h - (v - ymin) / (ymax - ymin) * h
-    path = lambda xs, ys: "M" + " L".join(f"{X(a):.1f},{Y(b):.1f}" for a, b in zip(xs, ys))
+def project(u, v, z):
+    x = CX + SX * (u * np.cos(ROT) + v * np.sin(ROT))
+    depth = -u * np.sin(ROT) + v * np.cos(ROT)
+    y = CY - SY * depth - HZ * z
+    return x, y
+
+
+def surface_frames():
+    thetas = np.linspace(0, 2 * np.pi, N_FRAMES, endpoint=False)
+    zmax = max(density(*np.meshgrid(U, V), th).max() for th in thetas)
+    frames = []                                  # frames[k][ridge] -> d string
+    for th in thetas:
+        ridges = []
+        for v in V:
+            z = density(U, v, th) / zmax
+            x, y = project(U, v, z)
+            bx, by = project(U[[-1, 0]], v, 0)   # floor line closes the shape
+            pts = " ".join(f"{a * 10:.0f} {b * 10:.0f}" for a, b in zip(x, y))
+            ridges.append(f"M{pts} L{bx[0] * 10:.0f} {by[0] * 10:.0f} L{bx[1] * 10:.0f} {by[1] * 10:.0f}Z")
+        frames.append(ridges)
+    return frames
+
+
+FRAMES = surface_frames()
+
+
+def surface(c):
     out = []
-    for v in range(0, 5):  # horizontal grid + y ticks
-        out.append(f'<line x1="{x0}" x2="{x0 + w}" y1="{Y(v):.1f}" y2="{Y(v):.1f}" stroke="{c["grid"]}"/>')
-        out.append(f'<text x="{x0 - 8}" y="{Y(v) + 4:.1f}" text-anchor="end" font-family="{MONO}" font-size="14" fill="{c["muted"]}">{v}</text>')
-    for v in range(0, 11, 2):
-        out.append(f'<line x1="{X(v):.1f}" x2="{X(v):.1f}" y1="{y0 + h}" y2="{y0 + h + 4}" stroke="{c["muted"]}"/>')
-        out.append(f'<text x="{X(v):.1f}" y="{y0 + h + 20}" text-anchor="middle" font-family="{MONO}" font-size="14" fill="{c["muted"]}">{v}</text>')
-    out.append(f'<line x1="{x0}" x2="{x0 + w}" y1="{y0 + h}" y2="{y0 + h}" stroke="{c["muted"]}"/>')
-    out.append(f'<line x1="{x0}" x2="{x0}" y1="{y0}" y2="{y0 + h}" stroke="{c["muted"]}"/>')
-    out.append(f'<text x="{x0 + w}" y="{y0 + h + 40}" text-anchor="end" font-family="{SANS}" font-size="15" fill="{c["muted"]}">dose  t</text>')
-    out.append(f'<text x="{x0 - 34}" y="{y0 + h / 2}" text-anchor="middle" font-family="{SANS}" font-size="15" font-style="italic" fill="{c["muted"]}" transform="rotate(-90 {x0 - 34} {y0 + h / 2})">outcome</text>')
-    dots = "".join(f'<circle cx="{X(a):.1f}" cy="{Y(b):.1f}" r="2.4"/>' for a, b in zip(SIM["pt"], SIM["py"]) if ymin < b < ymax)
-    out.append(f'<g class="pts" fill="{c["faint"]}">{dots}</g>')
-    g = SIM["grid"]
-    out.append(f'<path class="ln l0" d="{path(g, SIM["truth"])}" fill="none" stroke="{c["fg"]}" stroke-width="1.6" stroke-dasharray="5 4"/>')
-    out.append(f'<path class="ln l1" pathLength="1" d="{path(g, SIM["naive"])}" fill="none" stroke="{c["danger"]}" stroke-width="2"/>')
-    out.append(f'<path class="ln l2" pathLength="1" d="{path(g, SIM["corrected"])}" fill="none" stroke="{c["accent"]}" stroke-width="2.6"/>')
-    # legend
-    lx, ly = x0 + 14, y0 + 6
-    out.append(f'<rect x="{lx - 8}" y="{ly - 4}" width="212" height="80" rx="6" fill="{c["canvas"]}" fill-opacity="0.9" stroke="{c["border"]}"/>')
-    for i, (lab, col, dash, sw) in enumerate([("true dose–response", c["fg"], "5 4", 1.6),
-                                              ("naive estimate", c["danger"], "", 2),
-                                              ("reweighted estimate", c["accent"], "", 2.6)]):
-        yy = ly + 14 + i * 23
-        da = f' stroke-dasharray="{dash}"' if dash else ""
-        out.append(f'<line x1="{lx}" x2="{lx + 22}" y1="{yy}" y2="{yy}" stroke="{col}" stroke-width="{sw}"{da}/>')
-        out.append(f'<text x="{lx + 30}" y="{yy + 4}" font-family="{SANS}" font-size="15" fill="{c["fg"]}">{lab}</text>')
-    return "\n    ".join(out)
+    n = len(V)
+    for r in range(n):
+        vals = ";".join(FRAMES[k][r] for k in range(N_FRAMES)) + ";" + FRAMES[0][r]
+        op = 0.35 + 0.65 * r / (n - 1)
+        out.append(f'<path d="{FRAMES[0][r]}" fill="{c["canvas"]}" stroke="{c["accent"]}" stroke-opacity="{op:.2f}" '
+                   f'stroke-width="14" stroke-linejoin="round">'
+                   f'<animate attributeName="d" dur="{LOOP_S}s" repeatCount="indefinite" values="{vals}"/></path>')
+    # floor outline
+    corners = [project(np.array(a), np.array(b), 0) for a, b in [(-3.2, 3.2), (3.2, 3.2), (3.2, -3.2), (-3.2, -3.2)]]
+    floor = " L".join(f"{float(x) * 10:.0f} {float(y) * 10:.0f}" for x, y in corners)
+    return (f'<g transform="scale(0.1)"><path d="M{floor}Z" fill="none" stroke="{c["border"]}" stroke-width="10"/>'
+            + "".join(out) + "</g>")
 
 
 def header(theme):
     c = GH[theme]
     W, H = 1200, 320
-    topics = ["causal-inference", "explainable-ai", "ml-for-healthcare"]
+    topics = ["causal-inference", "explainable-ai"]
     chips, x = [], 48
     for tp in topics:
         w = 24 + 8.4 * len(tp)
         chips.append(f'<rect x="{x:.0f}" y="190" width="{w:.0f}" height="30" rx="15" fill="{c["accent_bg"]}"/>'
-                     f'<text x="{x + w / 2:.0f}" y="210" text-anchor="middle" font-family="{SANS}" font-size="15" font-weight="500" fill="{c["accent"]}">{tp}</text>')
+                     f'<text x="{x + w / 2:.0f}" y="210" text-anchor="middle" font-family="{SANS}" font-size="14" font-weight="500" fill="{c["accent"]}">{tp}</text>')
         x += w + 8
     return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-label="Alessandro Marchese, PhD researcher in causal machine learning and explainable AI">
-  <style>
-    .ln {{ stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1.8s ease-out forwards; }}
-    .l0 {{ stroke-dasharray: 5 4; stroke-dashoffset: 0; animation: none; }}
-    .l1 {{ animation-delay: .3s; }} .l2 {{ animation-delay: 1.1s; }}
-    .pts {{ opacity: 0; animation: fade .8s ease-out forwards; }}
-    @keyframes draw {{ to {{ stroke-dashoffset: 0; }} }}
-    @keyframes fade {{ to {{ opacity: 1; }} }}
-  </style>
+  <defs><clipPath id="hc"><rect x="592" y="1" width="{W - 593}" height="{H - 2}" rx="5"/></clipPath></defs>
   <rect x="0.5" y="0.5" width="{W - 1}" height="{H - 1}" rx="6" fill="{c["canvas"]}" stroke="{c["border"]}"/>
-  <text x="48" y="72" font-family="{MONO}" font-size="16" fill="{c["muted"]}">AlessandroMarchese / README.md</text>
+  <text x="48" y="72" font-family="{MONO}" font-size="13" fill="{c["muted"]}">AlessandroMarchese / README.md</text>
   <text x="46" y="128" font-family="{SANS}" font-size="44" font-weight="600" fill="{c["fg"]}" letter-spacing="-0.5">Alessandro Marchese</text>
   <text x="48" y="164" font-family="{SANS}" font-size="21" fill="{c["muted"]}">PhD researcher · causal ML &amp; explainable AI</text>
   {''.join(chips)}
   <text x="48" y="256" font-family="{SANS}" font-size="15" fill="{c["muted"]}">VUB × UHasselt</text>
   <text x="48" y="280" font-family="{SANS}" font-size="15" fill="{c["muted"]}">previously KU Leuven · King’s College London</text>
   <line x1="590" x2="590" y1="40" y2="280" stroke="{c["border"]}"/>
-  <g>
-    {figure(c, 680, 40, 472, 200)}
-  </g>
-  <text x="1152" y="304" text-anchor="end" font-family="{SANS}" font-size="14" fill="{c["muted"]}">Toy simulation · outcome-dependent selection biases the naive fit; reweighting recovers it</text>
+  <g clip-path="url(#hc)">{surface(c)}</g>
+  <text x="1168" y="34" text-anchor="end" font-family="{MONO}" font-size="13" fill="{c["muted"]}">p(x, y) · two-component Gaussian mixture</text>
 </svg>
 """
 
@@ -154,59 +141,99 @@ def card(theme, venue, vcol, title, subtitle, desc, motif, label):
 
 
 def m_recourse(c, v):
-    """Counterfactual explanations: rejected points take the minimal move across a linear decision boundary."""
+    """Recourse: units with a negative outcome are moved the minimal distance to the positive side, in a loop."""
+    T = 7.0
     rng = np.random.default_rng(5)
     ox, oy, w, h = 620, 30, 250, 124
-    A, B = np.array([ox + 70.0, oy]), np.array([ox + w, oy + h - 20.0])      # boundary endpoints (screen space)
+    A, B = np.array([ox + 70.0, oy]), np.array([ox + w, oy + h - 20.0])
     d = (B - A) / np.linalg.norm(B - A)
-    nrm = np.array([d[1], -d[0]])                                              # unit normal pointing to the accepted side
+    nrm = np.array([d[1], -d[0]])                      # points to the positive side
+    L = np.linalg.norm(B - A)
+    movers = [(A + t * d + off * nrm, off) for t, off in [(0.22 * L, -34), (0.42 * L, -22), (0.62 * L, -40), (0.82 * L, -26)]]
     P = np.column_stack([rng.uniform(ox + 8, ox + w - 8, 34), rng.uniform(oy + 8, oy + h - 8, 34)])
     s = [f'<defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="{v}"/></marker></defs>',
          f'<rect x="{ox}" y="{oy}" width="{w}" height="{h}" fill="none" stroke="{c["border"]}"/>',
-         f'<line x1="{A[0]:.1f}" y1="{A[1]:.1f}" x2="{B[0]:.1f}" y2="{B[1]:.1f}" stroke="{c["muted"]}" stroke-width="1.3" stroke-dasharray="4 3"/>']
-    L = np.linalg.norm(B - A)
-    picked = [(A + t * d + off * nrm, off) for t, off in [(0.22 * L, -34), (0.42 * L, -22), (0.62 * L, -40), (0.82 * L, -26)]]
+         f'<line x1="{A[0]:.1f}" y1="{A[1]:.1f}" x2="{B[0]:.1f}" y2="{B[1]:.1f}" stroke="{c["muted"]}" stroke-width="1.3" stroke-dasharray="4 3"/>',
+         f'<text x="{ox}" y="{oy - 7}" font-family="{SANS}" font-size="10" fill="{c["muted"]}">○ negative outcome</text>',
+         f'<text x="{ox + w}" y="{oy - 7}" text-anchor="end" font-family="{SANS}" font-size="10" fill="{c["muted"]}">● positive outcome</text>']
     for p in P:
-        dist = (p - A) @ nrm                      # >0 accepted, <0 rejected
-        if abs(dist) < 8 or any(np.linalg.norm(p - q) < 16 for q, _ in picked):
+        dist = (p - A) @ nrm
+        if abs(dist) < 8 or any(np.linalg.norm(p - q) < 16 for q, _ in movers):
             continue
         if dist > 0:
             s.append(f'<circle cx="{p[0]:.1f}" cy="{p[1]:.1f}" r="3" fill="{c["faint"]}"/>')
         else:
             s.append(f'<circle cx="{p[0]:.1f}" cy="{p[1]:.1f}" r="3" fill="{c["canvas"]}" stroke="{c["fg"]}" stroke-width="1.2"/>')
-    for i, (p, dist) in enumerate(picked):
+    for i, (p, dist) in enumerate(movers):
         q = p + (-dist + 8) * nrm
+        a = (0.6 + 1.1 * i) / T              # start of this unit's move
+        b = a + 0.7 / T                      # end of move
+        kt = f"0;{a:.3f};{b:.3f};0.90;0.97;1"
         s.append(f'<circle cx="{p[0]:.1f}" cy="{p[1]:.1f}" r="3" fill="{c["canvas"]}" stroke="{c["fg"]}" stroke-width="1.2"/>')
-        s.append(f'<g opacity="0"><animate attributeName="opacity" to="1" dur=".4s" begin="{0.8 + 0.3 * i:.1f}s" fill="freeze"/>'
-                 f'<line x1="{p[0]:.1f}" y1="{p[1]:.1f}" x2="{q[0]:.1f}" y2="{q[1]:.1f}" stroke="{v}" stroke-width="1.5" marker-end="url(#ah)"/>'
-                 f'<circle cx="{q[0]:.1f}" cy="{q[1]:.1f}" r="3" fill="{v}"/></g>')
-    s.append(f'<text x="{ox}" y="{oy - 7}" font-family="{SANS}" font-size="10" fill="{c["muted"]}">rejected</text>')
-    s.append(f'<text x="{ox + w}" y="{oy - 7}" text-anchor="end" font-family="{SANS}" font-size="10" fill="{c["muted"]}">accepted</text>')
-    s.append(f'<text x="{ox + w}" y="{oy + h + 16}" text-anchor="end" font-family="{SANS}" font-size="11" fill="{c["muted"]}">x  →  counterfactual  x′  (recourse)</text>')
+        s.append(
+            f'<line x1="{p[0]:.1f}" y1="{p[1]:.1f}" x2="{p[0]:.1f}" y2="{p[1]:.1f}" stroke="{v}" stroke-width="1.5" marker-end="url(#ah)" opacity="0">'
+            f'<animate attributeName="x2" values="{p[0]:.1f};{p[0]:.1f};{q[0]:.1f};{q[0]:.1f};{q[0]:.1f};{p[0]:.1f}" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
+            f'<animate attributeName="y2" values="{p[1]:.1f};{p[1]:.1f};{q[1]:.1f};{q[1]:.1f};{q[1]:.1f};{p[1]:.1f}" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
+            f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/></line>')
+        s.append(
+            f'<circle cx="{p[0]:.1f}" cy="{p[1]:.1f}" r="3.4" fill="{v}" opacity="0">'
+            f'<animate attributeName="cx" values="{p[0]:.1f};{p[0]:.1f};{q[0]:.1f};{q[0]:.1f};{q[0]:.1f};{p[0]:.1f}" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
+            f'<animate attributeName="cy" values="{p[1]:.1f};{p[1]:.1f};{q[1]:.1f};{q[1]:.1f};{q[1]:.1f};{p[1]:.1f}" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
+            f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/></circle>')
+    s.append(f'<text x="{ox + w}" y="{oy + h + 16}" text-anchor="end" font-family="{SANS}" font-size="11" fill="{c["muted"]}">recourse  x → x′  turns a negative outcome positive</text>')
     return "\n  ".join(s)
 
 
 def m_clexnet(c, v):
-    """Schematic in the style of a paper's Figure 1."""
-    f = SANS
-    def box(x, y, w, h, t, strong=False, it=False):
-        st = v if strong else c["border"]
-        fill = c["subtle"]
-        style = ' font-style="italic"' if it else ""
-        return (f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6" fill="{fill}" stroke="{st}" stroke-width="{1.6 if strong else 1}"/>'
-                f'<text x="{x + w / 2}" y="{y + h / 2 + 4}" text-anchor="middle" font-family="{f}" font-size="12"{style} fill="{c["fg"]}">{t}</text>')
-    arrow = lambda x1, y1, x2, y2, col, dash="": (f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{col}" stroke-width="1.4" marker-end="url(#a2)"'
-                                                 + (f' stroke-dasharray="{dash}"' if dash else "") + "/>")
-    s = [f'<defs><marker id="a2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="{c["muted"]}"/></marker></defs>']
-    s.append(box(612, 64, 78, 36, "offer x"))
-    s.append(box(724, 64, 62, 36, "φ(x)", strong=True, it=True))
-    s.append(box(820, 64, 60, 36, "accept?"))
-    s.append(box(700, 128, 110, 26, "refusal reason r"))
-    s.append(arrow(690, 82, 721, 82, c["muted"]))
-    s.append(arrow(786, 82, 817, 82, c["muted"]))
-    s.append(arrow(755, 128, 755, 103, c["muted"], "3 3"))
-    s.append(f'<text x="755" y="52" text-anchor="middle" font-family="{f}" font-size="11" fill="{v}">invariant across allocation policies</text>')
-    return "\n  ".join(s)
+    """Different circuits through φ(x) light up as the refusal reason changes."""
+    T = 9.0
+    inputs = [("donor", 46), ("organ", 74), ("recipient", 102), ("logistics", 130)]
+    hidden = [44, 66, 88, 110, 132]
+    ix, hx, ox_, oy_ = 676, 754, 820, 88
+    reasons = [("donor quality", [0, 1], [0, 1]), ("recipient condition", [2], [2, 3]), ("logistics / timing", [3], [3, 4])]
+    s = []
+    # faint full network
+    for _, iy in inputs:
+        for hy in hidden:
+            s.append(f'<line x1="{ix}" y1="{iy}" x2="{hx - 7}" y2="{hy}" stroke="{c["border"]}"/>')
+    for hy in hidden:
+        s.append(f'<line x1="{hx + 7}" y1="{hy}" x2="{ox_}" y2="{oy_}" stroke="{c["border"]}"/>')
+    # one highlighted circuit per refusal reason
+    for k, (name, ins, hs) in enumerate(reasons):
+        a, b, f = k / 3, (k + 1) / 3, 0.035
+        kt = f"0;{a:.3f};{a + f:.3f};{b - f:.3f};{b:.3f};1"
+        anim = f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{kt}" dur="{T}s" repeatCount="indefinite"/>'
+        if k == 0:
+            anim = f'<animate attributeName="opacity" values="1;1;0;0" keyTimes="0;{b - f:.3f};{b:.3f};1" dur="{T}s" repeatCount="indefinite"/>'
+        g = [f'<g opacity="{1 if k == 0 else 0}">{anim}']
+        for i in ins:
+            iy = inputs[i][1]
+            for j in hs:
+                pid = f"c{k}{i}{j}"
+                g.append(f'<path id="{pid}" d="M{ix},{iy} L{hx - 7},{hidden[j]}" stroke="{v}" stroke-width="2" fill="none"/>')
+                g.append(f'<circle r="2.6" fill="{v}"><animateMotion dur="1.1s" begin="{0.15 * j:.2f}s" repeatCount="indefinite"><mpath href="#{pid}"/></animateMotion></circle>')
+            g.append(f'<rect x="604" y="{iy - 10}" width="72" height="20" rx="5" fill="{c["subtle"]}" stroke="{v}" stroke-width="1.6"/>'
+                     f'<text x="640" y="{iy + 4}" text-anchor="middle" font-family="{SANS}" font-size="11" fill="{c["fg"]}">{inputs[i][0]}</text>')
+        for j in hs:
+            g.append(f'<path d="M{hx + 7},{hidden[j]} L{ox_},{oy_}" stroke="{v}" stroke-width="2" fill="none"/>')
+            g.append(f'<circle cx="{hx}" cy="{hidden[j]}" r="7" fill="{v}"/>')
+        g.append(f'<text x="880" y="26" text-anchor="end" font-family="{SANS}" font-size="12" font-weight="600" fill="{v}">{name}</text>')
+        g.append("</g>")
+        s.insert(len(s), "".join(g))
+    # static nodes drawn under the highlight layers would be hidden, so put the base nodes first
+    base = []
+    for name, iy in inputs:
+        base.append(f'<rect x="604" y="{iy - 10}" width="72" height="20" rx="5" fill="{c["subtle"]}" stroke="{c["border"]}"/>'
+                    f'<text x="640" y="{iy + 4}" text-anchor="middle" font-family="{SANS}" font-size="11" fill="{c["muted"]}">{name}</text>')
+    for hy in hidden:
+        base.append(f'<circle cx="{hx}" cy="{hy}" r="7" fill="{c["canvas"]}" stroke="{c["muted"]}" stroke-width="1.2"/>')
+    base.append(f'<text x="{hx}" y="160" text-anchor="middle" font-family="{SANS}" font-size="12" font-style="italic" fill="{c["muted"]}">φ(x)</text>')
+    base.append(f'<rect x="{ox_}" y="{oy_ - 13}" width="60" height="26" rx="6" fill="{c["subtle"]}" stroke="{c["border"]}"/>'
+                f'<text x="{ox_ + 30}" y="{oy_ + 4}" text-anchor="middle" font-family="{SANS}" font-size="12" fill="{c["fg"]}">accept?</text>')
+    base.append(f'<text x="742" y="26" text-anchor="end" font-family="{SANS}" font-size="12" fill="{c["muted"]}">refusal reason:</text>')
+    edges = [x for x in s if x.startswith("<line")]
+    layers = [x for x in s if not x.startswith("<line")]
+    return "\n  ".join(edges + base + layers)
 
 
 def m_dynamite(c, v):
@@ -234,6 +261,25 @@ def m_dynamite(c, v):
     return "\n  ".join(s)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Paper / Code buttons in GitHub's button style (these are the clickable parts).
+# ══════════════════════════════════════════════════════════════════════════════
+def button(theme, label, icon):
+    c = GH[theme]
+    W, H = 86, 30
+    icons = {
+        "paper": f'<path d="M3.5 1.5h6l3 3v10h-9z" fill="none" stroke="{c["muted"]}" stroke-width="1.3" stroke-linejoin="round"/>'
+                 f'<path d="M9.5 1.5v3h3M5.5 8h5M5.5 10.5h5M5.5 13h3" stroke="{c["muted"]}" stroke-width="1.2" fill="none"/>',
+        "code": f'<path d="M5 4 1.5 8 5 12M11 4l3.5 4L11 12" fill="none" stroke="{c["muted"]}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
+    }
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-label="{label}">
+  <rect x="0.5" y="0.5" width="{W - 1}" height="{H - 1}" rx="6" fill="{c["btn"]}" stroke="{c["btn_border"]}"/>
+  <g transform="translate(14,7)">{icons[icon]}</g>
+  <text x="38" y="20" font-family="{SANS}" font-size="13" font-weight="500" fill="{c["fg"]}">{label}</text>
+</svg>
+"""
+
+
 CARDS = [
     ("paper-recourse", "NeurIPS 2026", NEURIPS, "Continuous Treatment Effects", "  from recourse data",
      ["Counterfactual explanations as causal supervision:", "dose–response curves even when overlap fails."], m_recourse,
@@ -247,8 +293,13 @@ CARDS = [
 ]
 
 if __name__ == "__main__":
+    for old in HERE.glob("*.svg"):
+        old.unlink()
     for theme in ("dark", "light"):
         (HERE / f"header-{theme}.svg").write_text(header(theme), encoding="utf-8")
         for name, venue, vc, title, sub, desc, motif, label in CARDS:
             (HERE / f"{name}-{theme}.svg").write_text(card(theme, venue, vc[theme], title, sub, desc, motif, label), encoding="utf-8")
-    print("built:", ", ".join(sorted(p.name for p in HERE.glob("*.svg"))))
+        (HERE / f"btn-paper-{theme}.svg").write_text(button(theme, "Paper", "paper"), encoding="utf-8")
+        (HERE / f"btn-code-{theme}.svg").write_text(button(theme, "Code", "code"), encoding="utf-8")
+    for p in sorted(HERE.glob("*.svg")):
+        print(f"{p.name:28s} {p.stat().st_size / 1024:6.1f} KB")

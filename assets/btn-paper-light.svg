@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 86 30" width="86" height="30" role="img" aria-label="Paper">
+  <rect x="0.5" y="0.5" width="85" height="29" rx="6" fill="#f6f8fa" stroke="#d1d9e0"/>
+  <g transform="translate(14,7)"><path d="M3.5 1.5h6l3 3v10h-9z" fill="none" stroke="#59636e" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.5 1.5v3h3M5.5 8h5M5.5 10.5h5M5.5 13h3" stroke="#59636e" stroke-width="1.2" fill="none"/></g>
+  <text x="38" y="20" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#1f2328">Paper</text>
+</svg>
