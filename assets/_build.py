@@ -16,10 +16,10 @@ ML4H = {"dark": "#f778ba", "light": "#bf3989"}
 GH = {
     "dark": dict(canvas="#0d1117", subtle="#161b22", border="#30363d", fg="#e6edf3", muted="#8b949e",
                  faint="#484f58", accent="#4493f8", accent_bg="#121d2f", btn="#21262d", btn_border="#363b42",
-                 snake="#56d364", snake_glow="#3fb950", snake_head="#aff5b4"),
+                 snake_cells=["#56d364", "#2ea043", "#196c2e", "#0f5323"]),
     "light": dict(canvas="#ffffff", subtle="#f6f8fa", border="#d0d7de", fg="#1f2328", muted="#59636e",
                   faint="#afb8c1", accent="#0969da", accent_bg="#ddf4ff", btn="#f6f8fa", btn_border="#d1d9e0",
-                  snake="#1a7f37", snake_glow="#2da44e", snake_head="#116329"),
+                  snake_cells=["#116329", "#1a7f37", "#2da44e", "#6fdd8b"]),
 }
 SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif"
 MONO = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace"
@@ -38,7 +38,7 @@ NG = 24                                 # mesh nodes per side
 G = np.linspace(-3.2, 3.2, NG)
 ROT, SX, SY, HZ, CX, CY = 0.42, 56, 23, 125, 885, 190
 STEPS = 48                              # snake moves per surface loop
-SNAKE_LEN = 8
+SNAKE_LEN = 4
 
 
 def density(u, v, th):
@@ -79,55 +79,72 @@ def mesh_d(z):
     return rows + cols
 
 
-def simulate_snake():
-    """Greedy hill-climb on the moving density. Deterministic on a finite state space, so it settles into a
-    cycle; we start the animation at the beginning of that cycle so the loop is seamless."""
-    body = [(NG - 2, 1 + i) for i in range(SNAKE_LEN)][::-1]      # head first
+def component(u, v, th, k):
+    """Density of mixture component k alone (each snake climbs its own top)."""
+    m = [np.array([1.35 * np.cos(th), 1.0 * np.sin(th)]), np.array([-1.1 * np.cos(th + 0.6), -1.25 * np.sin(th + 0.6)])][k]
+    sd = [0.70 + 0.08 * np.cos(2 * th), 0.86 - 0.08 * np.cos(2 * th)][k]
+    return np.exp(-((u - m[0]) ** 2 + (v - m[1]) ** 2) / (2 * sd * sd))
+
+
+CU, CV = np.meshgrid((G[:-1] + G[1:]) / 2, (G[:-1] + G[1:]) / 2)     # cell centres [iv, iu]
+NC = NG - 1
+
+
+def simulate_snakes():
+    """Two short snakes made of mesh cells, each greedily climbing toward its component's top.
+    Deterministic on a finite state space, so it falls into a cycle; the animation starts at that cycle."""
+    def cell(x, y):
+        return (int(np.clip(round((y + 3.2) / 6.4 * NC - 0.5), 0, NC - 1)), int(np.clip(round((x + 3.2) / 6.4 * NC - 0.5), 0, NC - 1)))
+    starts = [cell(2.6, -1.6), cell(-2.6, 1.6)]
+    snakes = [[(v0, min(u0 + i, NC - 1)) for i in range(SNAKE_LEN)] for v0, u0 in starts]
     seen, history, s = {}, [], 0
     while True:
         if s % STEPS == 0:
-            key = tuple(body)
+            key = tuple(tuple(b) for b in snakes)
             if key in seen:
                 start = seen[key]
-                return history[start:s + 1], (s - start) // STEPS
+                return history[start:s], (s - start) // STEPS
             seen[key] = s
-        history.append(list(body))
-        z = z_at((s + 1) / STEPS)
-        hv, hu = body[0]
-        occupied = set(body[:-1])
-        moves = [(hv + dv, hu + du) for dv, du in ((-1, 0), (1, 0), (0, -1), (0, 1))]
-        moves = [m for m in moves if 0 <= m[0] < NG and 0 <= m[1] < NG and m not in occupied]
-        if not moves:
-            moves = [body[-1]]
-        nxt = max(moves, key=lambda m: (z[m], -m[0], -m[1]))
-        body = [nxt] + body[:-1]
+        history.append([list(b) for b in snakes])
+        th = 2 * np.pi * ((s + 1) / STEPS)
+        new = []
+        for k, body in enumerate(snakes):
+            score = component(CU, CV, th, k)
+            hv, hu = body[0]
+            blocked = set(body[:-1]) | {c for j, o in enumerate(snakes) if j != k for c in o} | {c for o in new for c in o}
+            moves = [(hv + dv, hu + du) for dv, du in ((-1, 0), (1, 0), (0, -1), (0, 1))]
+            moves = [m for m in moves if 0 <= m[0] < NC and 0 <= m[1] < NC and m not in blocked] or [body[-1]]
+            nxt = max(moves, key=lambda m: (score[m], -m[0], -m[1]))
+            new.append([nxt] + body[:-1])
+        snakes = new
         s += 1
 
 
-SNAKE, SNAKE_PERIODS = simulate_snake()
+SNAKES, SNAKE_PERIODS = simulate_snakes()
 
 
 def snake_layer(c):
-    pts = []
-    for k, body in enumerate(SNAKE):
-        z = z_at(k / STEPS)
-        xy = [project(G[iu], G[iv], z[iv, iu] + 0.012) for iv, iu in body]
-        pts.append(xy)
-    pts.append(pts[0])                                   # close the loop
-    d_vals = ";".join("M" + " L".join(f"{x:.1f} {y:.1f}" for x, y in xy) for xy in pts)
-    hx = ";".join(f"{xy[0][0]:.1f}" for xy in pts)
-    hy = ";".join(f"{xy[0][1]:.1f}" for xy in pts)
+    """Each body part is one mesh square, lifted onto the surface and inset so the blocks read separately."""
+    frames = SNAKES + SNAKES[:1]
     dur = SNAKE_PERIODS * LOOP_S
     anim = f'dur="{dur}s" repeatCount="indefinite"'
-    d0 = d_vals.split(";")[0]
-    glow, body_col, head = c["snake_glow"], c["snake"], c["snake_head"]
-    return (f'<defs><filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3.5"/></filter></defs>'
-            f'<path d="{d0}" fill="none" stroke="{glow}" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" opacity="0.75" filter="url(#glow)">'
-            f'<animate attributeName="d" {anim} values="{d_vals}"/></path>'
-            f'<path d="{d0}" fill="none" stroke="{body_col}" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">'
-            f'<animate attributeName="d" {anim} values="{d_vals}"/></path>'
-            f'<circle r="4.2" fill="{head}" cx="{hx.split(";")[0]}" cy="{hy.split(";")[0]}">'
-            f'<animate attributeName="cx" {anim} values="{hx}"/><animate attributeName="cy" {anim} values="{hy}"/></circle>')
+    cols = c["snake_cells"]
+    out = []
+    for k in range(2):
+        for seg in range(SNAKE_LEN):
+            ds = []
+            for step, state in enumerate(frames):
+                z = z_at(step / STEPS)
+                iv, iu = state[k][seg]
+                corners = [(iv, iu), (iv, iu + 1), (iv + 1, iu + 1), (iv + 1, iu)]
+                xy = np.array([project(G[cu], G[cv], z[cv, cu] + 0.01) for cv, cu in corners])
+                ctr = xy.mean(0)
+                xy = ctr + (xy - ctr) * 0.84
+                ds.append("M" + " L".join(f"{x:.1f} {y:.1f}" for x, y in xy) + "Z")
+            out.append(f'<path d="{ds[0]}" fill="{cols[seg]}"><animate attributeName="d" {anim} values="{";".join(ds)}"/></path>')
+    body = "".join(out)
+    return (f'<defs><filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="4"/></filter></defs>'
+            f'<g filter="url(#glow)" opacity="0.8">{body}</g><g>{body}</g>')
 
 
 def surface(c):
