@@ -15,9 +15,11 @@ ML4H = {"dark": "#f778ba", "light": "#bf3989"}
 # ── GitHub Primer palette ─────────────────────────────────────────────────────
 GH = {
     "dark": dict(canvas="#0d1117", subtle="#161b22", border="#30363d", fg="#e6edf3", muted="#8b949e",
-                 faint="#484f58", accent="#4493f8", accent_bg="#121d2f", btn="#21262d", btn_border="#363b42"),
+                 faint="#484f58", accent="#4493f8", accent_bg="#121d2f", btn="#21262d", btn_border="#363b42",
+                 g_fill="#0b3d1c", g_line="#3fb950", g_block="#2ea043"),
     "light": dict(canvas="#ffffff", subtle="#f6f8fa", border="#d0d7de", fg="#1f2328", muted="#59636e",
-                  faint="#afb8c1", accent="#0969da", accent_bg="#ddf4ff", btn="#f6f8fa", btn_border="#d1d9e0"),
+                  faint="#afb8c1", accent="#0969da", accent_bg="#ddf4ff", btn="#f6f8fa", btn_border="#d1d9e0",
+                  g_fill="#aceebb", g_line="#1a7f37", g_block="#2da44e"),
 }
 SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif"
 MONO = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace"
@@ -34,7 +36,7 @@ def esc(s):
 N_FRAMES, LOOP_S = 28, 16
 U = np.linspace(-3.2, 3.2, 34)          # along each ridge
 V = np.linspace(3.2, -3.2, 24)          # ridges, far → near (painter's order)
-ROT, SX, SY, HZ, CX, CY = 0.42, 56, 23, 125, 885, 196
+ROT, SX, SY, HZ, CX, CY = 0.42, 56, 23, 125, 885, 190
 
 
 def density(u, v, th):
@@ -72,20 +74,56 @@ def surface_frames():
 FRAMES = surface_frames()
 
 
+GLITCH_S = 11.0                                   # own cycle, out of step with the 16 s surface loop
+BURSTS = [(3.0, 0.40), (7.9, 0.22), (9.65, 0.16)]  # (start, duration) in seconds
+
+
 def surface(c):
-    out = []
+    """The morphing surface, plus a glitch: bands tear sideways and reveal a green copy underneath."""
     n = len(V)
+    ridges = []
     for r in range(n):
         vals = ";".join(FRAMES[k][r] for k in range(N_FRAMES)) + ";" + FRAMES[0][r]
         op = 0.35 + 0.65 * r / (n - 1)
-        out.append(f'<path d="{FRAMES[0][r]}" fill="{c["canvas"]}" stroke="{c["accent"]}" stroke-opacity="{op:.2f}" '
-                   f'stroke-width="14" stroke-linejoin="round">'
-                   f'<animate attributeName="d" dur="{LOOP_S}s" repeatCount="indefinite" values="{vals}"/></path>')
-    # floor outline
+        ridges.append(f'<path d="{FRAMES[0][r]}" stroke-opacity="{op:.2f}" stroke-width="14" stroke-linejoin="round">'
+                      f'<animate attributeName="d" dur="{LOOP_S}s" repeatCount="indefinite" values="{vals}"/></path>')
     corners = [project(np.array(a), np.array(b), 0) for a, b in [(-3.2, 3.2), (3.2, 3.2), (3.2, -3.2), (-3.2, -3.2)]]
-    floor = " L".join(f"{float(x) * 10:.0f} {float(y) * 10:.0f}" for x, y in corners)
-    return (f'<g transform="scale(0.1)"><path d="M{floor}Z" fill="none" stroke="{c["border"]}" stroke-width="10"/>'
-            + "".join(out) + "</g>")
+    floor = " L".join(f"{float(x):.1f} {float(y):.1f}" for x, y in corners)
+
+    rng = np.random.default_rng(23)
+    edges = np.concatenate([[0], np.sort(rng.uniform(40, 300, 11)), [320]])
+    defs = [f'<g id="surf" transform="scale(0.1)">{"".join(ridges)}</g>']
+    layers = [f'<path d="M{floor}Z" fill="none" stroke="{c["border"]}"/>',
+              f'<use href="#surf" fill="{c["g_fill"]}" stroke="{c["g_line"]}" opacity="0">'
+              f'<animate attributeName="opacity" calcMode="discrete" dur="{GLITCH_S}s" repeatCount="indefinite" '
+              f'keyTimes="0;{";".join(f"{t0 / GLITCH_S:.4f};{(t0 + d) / GLITCH_S:.4f}" for t0, d in BURSTS)}" '
+              f'values="0;{";".join("1;0" for _ in BURSTS)}"/></use>']
+    for i in range(len(edges) - 1):
+        y0, y1 = edges[i], edges[i + 1] + 1.0                      # 1px overlap hides seams
+        defs.append(f'<clipPath id="b{i}"><rect x="590" y="{y0:.1f}" width="610" height="{y1 - y0:.1f}"/></clipPath>')
+        keys = [(0.0, 0.0)]
+        for t0, d in BURSTS:
+            if rng.uniform() < 0.55:
+                for k in range(3):
+                    keys.append(((t0 + k * d / 3) / GLITCH_S, float(rng.choice([-1, 1]) * rng.uniform(5, 34))))
+                keys.append(((t0 + d) / GLITCH_S, 0.0))
+        keys.append((1.0, 0.0))
+        anim = ""
+        if len(keys) > 2:
+            anim = (f'<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="{GLITCH_S}s" repeatCount="indefinite" '
+                    f'keyTimes="{";".join(f"{t:.4f}" for t, _ in keys)}" values="{";".join(f"{dx:.0f} 0" for _, dx in keys)}"/>')
+        layers.append(f'<g clip-path="url(#b{i})"><use href="#surf" fill="{c["canvas"]}" stroke="{c["accent"]}">{anim}</use></g>')
+    # green blocks flickering during the bursts
+    for t0, d in BURSTS:
+        for _ in range(7):
+            x, y = rng.uniform(650, 1130), rng.uniform(70, 280)
+            w, h = rng.uniform(6, 70), rng.uniform(3, 14)
+            on = t0 + rng.uniform(0, d * 0.6)
+            off = min(on + rng.uniform(0.05, d * 0.6), t0 + d)
+            layers.append(f'<rect x="{x:.0f}" y="{y:.0f}" width="{w:.0f}" height="{h:.0f}" fill="{c["g_block"]}" opacity="0">'
+                          f'<animate attributeName="opacity" calcMode="discrete" dur="{GLITCH_S}s" repeatCount="indefinite" '
+                          f'keyTimes="0;{on / GLITCH_S:.4f};{off / GLITCH_S:.4f}" values="0;0.9;0"/></rect>')
+    return "<defs>" + "".join(defs) + "</defs>" + "".join(layers)
 
 
 def header(theme):
@@ -109,7 +147,6 @@ def header(theme):
   <text x="48" y="280" font-family="{SANS}" font-size="15" fill="{c["muted"]}">previously KU Leuven · King’s College London</text>
   <line x1="590" x2="590" y1="40" y2="280" stroke="{c["border"]}"/>
   <g clip-path="url(#hc)">{surface(c)}</g>
-  <text x="1168" y="34" text-anchor="end" font-family="{MONO}" font-size="13" fill="{c["muted"]}">p(x, y) · two-component Gaussian mixture</text>
 </svg>
 """
 
@@ -187,10 +224,10 @@ def m_recourse(c, v):
 def m_clexnet(c, v):
     """Different circuits through φ(x) light up as the refusal reason changes."""
     T = 9.0
-    inputs = [("donor", 46), ("organ", 74), ("recipient", 102), ("logistics", 130)]
+    inputs = [("patient", 64), ("organ", 112)]
     hidden = [44, 66, 88, 110, 132]
     ix, hx, ox_, oy_ = 676, 754, 820, 88
-    reasons = [("donor quality", [0, 1], [0, 1]), ("recipient condition", [2], [2, 3]), ("logistics / timing", [3], [3, 4])]
+    reasons = [("organ quality", [1], [0, 1]), ("patient condition", [0], [2, 3]), ("logistics / timing", [0, 1], [3, 4])]
     s = []
     # faint full network
     for _, iy in inputs:
@@ -281,7 +318,7 @@ def button(theme, label, icon):
 
 
 CARDS = [
-    ("paper-recourse", "NeurIPS 2026", NEURIPS, "Continuous Treatment Effects", "  from recourse data",
+    ("paper-recourse", "NeurIPS 2026", NEURIPS, "Treatment Effects", "  from recourse data",
      ["Counterfactual explanations as causal supervision:", "dose–response curves even when overlap fails."], m_recourse,
      "NeurIPS 2026: Estimating Continuous Treatment Effects with Recourse Data"),
     ("paper-clexnet", "NeurIPS 2025", NEURIPS, "ClexNet", "  causal, explanation-guided",

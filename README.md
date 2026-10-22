@@ -25,7 +25,7 @@
 class Alessandro:
     role        = "Joint PhD student @ VUB × UHasselt"
     previously  = ["Engineering @ KU Leuven", "Visiting researcher @ King's College London"]
-    interests   = ["causal inference", "explainable AI", "treatment effects", "ML for healthcare"]
+    interests   = ["causal inference", "explainable AI", "treatment effects"]
     currently   = "turning counterfactual explanations into causal supervision"
     open_to     = ["collaborations", "new ideas", "a good coffee chat ☕"]
 ```
